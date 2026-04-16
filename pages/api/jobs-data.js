@@ -6,7 +6,8 @@ import { daysAgo, dedupeJobs } from '../../lib/jobs-utils';
 
 export const config = { api: { responseLimit: false } };
 
-const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+const CACHE_TTL_SECONDS = 7 * 24 * 60 * 60; // 7 days
+const CACHE_TTL_MS = CACHE_TTL_SECONDS * 1000;
 
 // Module-level memory cache — persists across requests on same serverless instance
 let memoryCache = null;
@@ -62,7 +63,7 @@ async function writeToRedis(value) {
         Authorization: `Bearer ${cfg.token}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(['SET', 'jobs_cache_v3', serialized, 'EX', 86400]),
+      body: JSON.stringify(['SET', 'jobs_cache_v3', serialized, 'EX', CACHE_TTL_SECONDS]),
       cache: 'no-store',
     });
     if (!res.ok) {
