@@ -16,7 +16,7 @@ function isRecent(dateStr) {
 
 function buildMessage(recentClients, totalRecent) {
   if (totalRecent === 0) {
-    return `:briefcase: *Weekly Job Digest*\n\nNo new openings were posted across our monitored clients in the last ${RECENT_DAYS} days.\n\n<${JOBS_URL}|Open dashboard →>`;
+    return `:briefcase: *Daily Job Digest*\n\nNo openings posted across our monitored clients in the last ${RECENT_DAYS} days.\n\n<${JOBS_URL}|Open dashboard →>`;
   }
 
   const lines = recentClients
@@ -25,9 +25,9 @@ function buildMessage(recentClients, totalRecent) {
     .map(c => `• *${c.name}* — ${c.recentJobs.length} role${c.recentJobs.length === 1 ? '' : 's'}`);
 
   return [
-    `:briefcase: *Weekly Job Digest*`,
+    `:briefcase: *Daily Job Digest*`,
     ``,
-    `${recentClients.length} client${recentClients.length === 1 ? '' : 's'} posted ${totalRecent} role${totalRecent === 1 ? '' : 's'} in the last ${RECENT_DAYS} days:`,
+    `${recentClients.length} client${recentClients.length === 1 ? '' : 's'} with ${totalRecent} role${totalRecent === 1 ? '' : 's'} posted in the last ${RECENT_DAYS} days:`,
     ``,
     ...lines,
     ``,
