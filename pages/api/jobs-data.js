@@ -28,8 +28,14 @@ async function readFromRedis() {
   const cfg = getRedisConfig();
   if (!cfg) return null;
   try {
-    const res = await fetch(`${cfg.url}/get/jobs_cache_v3`, {
-      headers: { Authorization: `Bearer ${cfg.token}` },
+    // Use command-array form (POST to root URL) — most reliable with Upstash REST.
+    const res = await fetch(cfg.url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${cfg.token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(['GET', 'jobs_cache_v3']),
       cache: 'no-store',
     });
     if (!res.ok) return null;
@@ -47,19 +53,23 @@ async function writeToRedis(value) {
   const cfg = getRedisConfig();
   if (!cfg) return;
   try {
-    // Upstash SET with EX uses query param format
-    const url = `${cfg.url}/set/jobs_cache_v3?ex=86400`;
-    await fetch(url, {
+    // Use command-array form so SET + EX is unambiguous and the value is stored
+    // as a single JSON-encoded string (no double-stringify).
+    const serialized = JSON.stringify(value);
+    const res = await fetch(cfg.url, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${cfg.token}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(JSON.stringify(value)),
+      body: JSON.stringify(['SET', 'jobs_cache_v3', serialized, 'EX', 86400]),
       cache: 'no-store',
     });
-  } catch {
-    // non-critical
+    if (!res.ok) {
+      console.error('Redis SET failed', res.status, await res.text().catch(() => ''));
+    }
+  } catch (err) {
+    console.error('Redis SET error', err);
   }
 }
 
