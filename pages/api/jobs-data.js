@@ -3,10 +3,11 @@ import { fetchClients } from '../../lib/clients';
 import { getApolloJobs } from '../../lib/apollo-jobs';
 import { scrapeCareerPage } from '../../lib/scraper-jobs';
 import { daysAgo, dedupeJobs } from '../../lib/jobs-utils';
+import { readJobsCache, writeJobsCache, CACHE_TTL_SECONDS } from '../../lib/jobs-cache';
 
 export const config = { api: { responseLimit: false } };
 
-const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+const CACHE_TTL_MS = CACHE_TTL_SECONDS * 1000;
 
 // Module-level memory cache — persists across requests on same serverless instance
 let memoryCache = null;
@@ -15,52 +16,6 @@ let memoryCacheTime = null;
 function isCacheValid() {
   if (!memoryCache || !memoryCacheTime) return false;
   return Date.now() - memoryCacheTime < CACHE_TTL_MS;
-}
-
-// ── Redis helpers ─────────────────────────────────────────────────────────────
-function getRedisConfig() {
-  const url = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL;
-  const token = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN;
-  return (url && token) ? { url, token } : null;
-}
-
-async function readFromRedis() {
-  const cfg = getRedisConfig();
-  if (!cfg) return null;
-  try {
-    const res = await fetch(`${cfg.url}/get/jobs_cache_v3`, {
-      headers: { Authorization: `Bearer ${cfg.token}` },
-      cache: 'no-store',
-    });
-    if (!res.ok) return null;
-    const json = await res.json();
-    if (!json.result) return null;
-    const parsed = JSON.parse(json.result);
-    if (!parsed || !Array.isArray(parsed.clients)) return null;
-    return parsed;
-  } catch {
-    return null;
-  }
-}
-
-async function writeToRedis(value) {
-  const cfg = getRedisConfig();
-  if (!cfg) return;
-  try {
-    // Upstash SET with EX uses query param format
-    const url = `${cfg.url}/set/jobs_cache_v3?ex=86400`;
-    await fetch(url, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${cfg.token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(JSON.stringify(value)),
-      cache: 'no-store',
-    });
-  } catch {
-    // non-critical
-  }
 }
 
 // ── Live fetch ────────────────────────────────────────────────────────────────
@@ -115,7 +70,7 @@ export default async function handler(req, res) {
 
   // 2. Redis cache (survives across serverless instances)
   if (!forceRefresh) {
-    const redisData = await readFromRedis();
+    const redisData = await readJobsCache();
     if (redisData) {
       memoryCache = redisData;
       memoryCacheTime = Date.now();
@@ -128,7 +83,7 @@ export default async function handler(req, res) {
     const data = await fetchLive();
     memoryCache = data;
     memoryCacheTime = Date.now();
-    await writeToRedis(data);
+    await writeJobsCache(data);
     return res.status(200).json(data);
   } catch (err) {
     return res.status(500).json({ error: err.message });

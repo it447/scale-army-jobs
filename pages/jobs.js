@@ -101,7 +101,15 @@ export default function Jobs() {
     }
   };
 
-  useEffect(() => { fetchData(); }, []);
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const tab = new URLSearchParams(window.location.search).get('tab');
+      if (tab === 'all' || tab === 'recent' || tab === 'today') {
+        setActiveTab(tab);
+      }
+    }
+    fetchData();
+  }, []);
 
   const toggleExpand = domain => setExpanded(e => ({ ...e, [domain]: !e[domain] }));
 
