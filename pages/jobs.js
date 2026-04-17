@@ -136,7 +136,7 @@ export default function Jobs() {
   const recentRoles = recentClients.reduce((s, c) => s + c.jobs.length, 0);
   const todayRoles = todayClients.reduce((s, c) => s + c.jobs.length, 0);
 
-  const fetchedAt = data?.fetchedAt ? new Date(data.fetchedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+  const fetchedAt = data?.fetchedAt ? new Date(data.fetchedAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
 
   // Filter by search
   const filterBySearch = clients => clients.map(c => ({
@@ -167,7 +167,11 @@ export default function Jobs() {
             <span className={styles.fetchedAt}>
               {data?.fromCache ? `Cached · last fetched ${fetchedAt}` : `Live · fetched ${fetchedAt}`}
             </span>
-            <button className={styles.refreshBtn} onClick={() => fetchData(true)} disabled={loading}>
+            <button className={styles.refreshBtn} onClick={() => {
+              if (window.confirm(`This will run a fresh Apollo scrape and use API credits.\n\nLast scraped: ${fetchedAt || 'unknown'}\n\nContinue?`)) {
+                fetchData(true);
+              }
+            }} disabled={loading}>
               {loading ? '...' : '↻ Refresh now'}
             </button>
           </div>
