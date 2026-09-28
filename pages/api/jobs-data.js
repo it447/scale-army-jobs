@@ -6,6 +6,11 @@ import { daysAgo, dedupeJobs } from '../../lib/jobs-utils';
 import { readJobsCache, writeJobsCache, CACHE_TTL_SECONDS } from '../../lib/jobs-cache';
 
 export const config = { api: { responseLimit: false } };
+// The biweekly cron runs a full scrape; without this the function can hit the
+// default timeout and get killed before the cache is written.
+export const maxDuration = 60;
+
+const CONCURRENCY = 5;
 
 const CACHE_TTL_MS = CACHE_TTL_SECONDS * 1000;
 
@@ -19,39 +24,54 @@ function isCacheValid() {
 }
 
 // ── Live fetch ────────────────────────────────────────────────────────────────
+async function fetchClientJobs(client) {
+  try {
+    const [apolloResult, scrapeJobs] = await Promise.all([
+      getApolloJobs(client.domain),
+      scrapeCareerPage(client.domain, client.careersUrl),
+    ]);
+
+    const allJobs = dedupeJobs([...apolloResult.jobs, ...scrapeJobs])
+      .sort((a, b) => {
+        if (!a.postedAt && !b.postedAt) return 0;
+        if (!a.postedAt) return 1;
+        if (!b.postedAt) return -1;
+        return new Date(b.postedAt) - new Date(a.postedAt);
+      })
+      .map(j => ({ ...j, postedAgo: daysAgo(j.postedAt) }));
+
+    return {
+      name: client.name,
+      domain: client.domain,
+      linkedinUrl: client.linkedinUrl,
+      jobs: allJobs,
+      totalJobs: allJobs.length,
+      apolloJobs: apolloResult.jobs.length,
+      scrapeJobs: scrapeJobs.length,
+    };
+  } catch (err) {
+    return { name: client.name, domain: client.domain, jobs: [], totalJobs: 0, error: err.message };
+  }
+}
+
 async function fetchLive() {
   const clients = await fetchClients();
   const results = [];
 
-  for (const client of clients) {
-    try {
-      const [apolloResult, scrapeJobs] = await Promise.all([
-        getApolloJobs(client.domain),
-        scrapeCareerPage(client.domain, client.careersUrl),
-      ]);
+  // Small parallel batches keep the run well inside the function timeout
+  // while staying gentle on Apollo's rate limits.
+  for (let i = 0; i < clients.length; i += CONCURRENCY) {
+    const batch = clients.slice(i, i + CONCURRENCY);
+    results.push(...await Promise.all(batch.map(fetchClientJobs)));
+    if (i + CONCURRENCY < clients.length) await new Promise(r => setTimeout(r, 300));
+  }
 
-      const allJobs = dedupeJobs([...apolloResult.jobs, ...scrapeJobs])
-        .sort((a, b) => {
-          if (!a.postedAt && !b.postedAt) return 0;
-          if (!a.postedAt) return 1;
-          if (!b.postedAt) return -1;
-          return new Date(b.postedAt) - new Date(a.postedAt);
-        })
-        .map(j => ({ ...j, postedAgo: daysAgo(j.postedAt) }));
-
-      results.push({
-        name: client.name,
-        domain: client.domain,
-        linkedinUrl: client.linkedinUrl,
-        jobs: allJobs,
-        totalJobs: allJobs.length,
-        apolloJobs: apolloResult.jobs.length,
-        scrapeJobs: scrapeJobs.length,
-      });
-    } catch (err) {
-      results.push({ name: client.name, domain: client.domain, jobs: [], totalJobs: 0, error: err.message });
-    }
-    await new Promise(r => setTimeout(r, 300));
+  const failed = results.filter(r => r.error);
+  console.log(`jobs-data: scraped ${results.length} clients, ${failed.length} failed`);
+  if (results.length > 0 && failed.length === results.length) {
+    // Every client failed (e.g. Apollo key revoked or out of credits) — don't
+    // overwrite the last good cache with empty data.
+    throw new Error(`All ${results.length} clients failed. First error: ${failed[0].error}`);
   }
 
   return { clients: results, fetchedAt: new Date().toISOString(), fromCache: false };
@@ -86,6 +106,7 @@ export default async function handler(req, res) {
     await writeJobsCache(data);
     return res.status(200).json(data);
   } catch (err) {
+    console.error('jobs-data: live fetch failed', err);
     return res.status(500).json({ error: err.message });
   }
 }
